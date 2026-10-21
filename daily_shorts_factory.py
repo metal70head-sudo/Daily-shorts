@@ -36,19 +36,18 @@ def get_key(name, required=True):
     try:
         from google.colab import userdata
         v = userdata.get(name)
-        if v:
-            return v
+        if v and v.strip():
+            return v.strip()          # strip() removes a hidden line break or space pasted with the key
     except Exception:
         pass
     v = os.environ.get(name)
-    if v:
-        return v
+    if v and v.strip():
+        return v.strip()
     if not required:
         return None
     if not IN_COLAB and not sys.stdin.isatty():
         raise RuntimeError(f"Missing secret {name}. Add it in GitHub: Settings > Secrets and variables > Actions.")
-    return getpass.getpass(f"Paste {name} and press Enter: ")
-
+    return getpass.getpass(f"Paste {name} and press Enter: ").strip()
 ANTHROPIC_API_KEY = get_key("ANTHROPIC_API_KEY")
 GEMINI_API_KEY    = get_key("GEMINI_API_KEY")
 PIXABAY_API_KEY   = get_key("PIXABAY_API_KEY")
