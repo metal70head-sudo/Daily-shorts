@@ -7,8 +7,30 @@ if IN_COLAB:
 
 # ===== Part 1 =====
 # 2. Keys
-import os, re, json, time, random, asyncio, subprocess, getpass, pathlib, traceback, datetime
+import os, re, json, time, random, asyncio, subprocess, getpass, pathlib, traceback, datetime, signal, contextlib
 import requests
+
+@contextlib.contextmanager
+def time_limit(seconds, label):
+    """Stops anything that hangs: raises TimeoutError instead of waiting for hours."""
+    try:
+        def handler(signum, frame):
+            raise TimeoutError(f"{label} took longer than {int(seconds)}s and was stopped")
+        prev = signal.getitimer(signal.ITIMER_REAL)[0]
+        limit = min(seconds, prev) if prev > 0 else seconds
+        old_handler = signal.signal(signal.SIGALRM, handler)
+        signal.setitimer(signal.ITIMER_REAL, limit)
+    except (AttributeError, ValueError):
+        yield                      # no alarm available here, run without a limit
+        return
+    started = time.time()
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, old_handler)
+        if prev > 0:
+            signal.setitimer(signal.ITIMER_REAL, max(0.01, prev - (time.time() - started)))
 
 def get_key(name, required=True):
     try:
@@ -81,7 +103,7 @@ print("History file:", HISTORY_PATH)
 # ===== Part 3 =====
 # 4. Script writer (Claude)
 import anthropic
-claude = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+claude = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY, timeout=120.0, max_retries=2)
 
 NICHES = {
     "did_you_know": {
@@ -210,7 +232,8 @@ def gemini_call(prompt, search):
             if wait:
                 time.sleep(wait)
             try:
-                return gem.models.generate_content(model=m, contents=prompt, config=cfg)
+                with time_limit(150, "Gemini call"):
+                    return gem.models.generate_content(model=m, contents=prompt, config=cfg)
             except Exception as e:
                 last = e
                 msg = str(e)
@@ -529,7 +552,35 @@ def post_text(script, issues):
 
 # ===== Part 8 =====
 # 9. Daily run
+def preflight():
+    """Quick connection test. Sends the result to Telegram so you can see at once what works."""
+    results = {}
+    def check(name, fn, seconds=60):
+        try:
+            with time_limit(seconds, name):
+                fn()
+            results[name] = "OK"
+        except Exception as e:
+            results[name] = "FAILED: " + str(e)[:150]
+        print(f"  check {name}: {results[name]}")
+    check("Telegram", lambda: tg_text("Daily Shorts is starting. Checking your connections..."))
+    if results["Telegram"] != "OK":
+        raise RuntimeError("Telegram is not working, so nothing can be delivered. Check TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.")
+    check("Claude", lambda: claude.messages.create(model=CLAUDE_MODEL, max_tokens=20, messages=[{"role": "user", "content": "Say OK"}]))
+    check("Pixabay", lambda: requests.get("https://pixabay.com/api/videos/", params={"key": PIXABAY_API_KEY, "q": "ocean", "per_page": 3}, timeout=20).raise_for_status())
+    check("Gemini", lambda: gemini_call("Say OK", False))
+    check("Voice", lambda: asyncio.run(_tts("Testing one two three.", WORKDIR / "preflight.mp3")))
+    report = "Connection check:\n" + "\n".join(f"- {k}: {v}" for k, v in results.items())
+    try:
+        tg_text(report)
+    except Exception:
+        pass
+    must_work = [k for k in ("Claude", "Pixabay", "Voice") if results[k] != "OK"]
+    if must_work:
+        raise RuntimeError("Stopping because these failed: " + ", ".join(must_work) + ". See the Telegram message.")
+
 def run_daily():
+    preflight()
     history = load_history()
     today = datetime.date.today().isoformat()
     ok_count = 0
@@ -540,9 +591,11 @@ def run_daily():
         done = False
         for attempt in range(1, MAX_ATTEMPTS_PER_VIDEO + 1):
             try:
-                script = generate_script(niche, history.get(niche, []))
+                with time_limit(300, "writing the script"):
+                    script = generate_script(niche, history.get(niche, []))
                 print("  topic:", script["topic"])
-                review = proofread(script, niche)
+                with time_limit(420, "fact-checking"):
+                    review = proofread(script, niche)
                 verdict = review.get("verdict", "reject")
                 issues = review.get("issues", [])
                 history.setdefault(niche, []).append(script["topic"])
@@ -552,12 +605,14 @@ def run_daily():
                 final = check_script(review["script"]) if verdict == "fixed" else script
                 job_dir = WORKDIR / f"{today}_{n}_{niche}"
                 job_dir.mkdir(exist_ok=True)
-                video = make_video(final, job_dir)
-                if SEND_PREVIEW:
-                    tg_video(video, f"Video {n}: {final['title']}")
-                if SEND_ORIGINAL_FILE:
-                    tg_document(video, f"Video {n} - full quality file, upload this one", final["title"])
-                tg_text(post_text(final, issues))
+                with time_limit(900, "making the video"):
+                    video = make_video(final, job_dir)
+                with time_limit(900, "sending to Telegram"):
+                    if SEND_PREVIEW:
+                        tg_video(video, f"Video {n}: {final['title']}")
+                    if SEND_ORIGINAL_FILE:
+                        tg_document(video, f"Video {n} - full quality file, upload this one", final["title"])
+                    tg_text(post_text(final, issues))
                 save_history(history)
                 ok_count += 1
                 done = True
@@ -572,6 +627,10 @@ def run_daily():
             except Exception:
                 pass
     print(f"\nDone. {ok_count}/{len(DAILY_PLAN)} videos sent.")
+    try:
+        tg_text(f"Finished: {ok_count} of {len(DAILY_PLAN)} videos were sent today.")
+    except Exception:
+        pass
 
 run_daily()
 
