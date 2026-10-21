@@ -48,6 +48,7 @@ def get_key(name, required=True):
     if not IN_COLAB and not sys.stdin.isatty():
         raise RuntimeError(f"Missing secret {name}. Add it in GitHub: Settings > Secrets and variables > Actions.")
     return getpass.getpass(f"Paste {name} and press Enter: ").strip()
+
 ANTHROPIC_API_KEY = get_key("ANTHROPIC_API_KEY")
 GEMINI_API_KEY    = get_key("GEMINI_API_KEY")
 PIXABAY_API_KEY   = get_key("PIXABAY_API_KEY")
@@ -134,6 +135,73 @@ NICHES = {
     },
 }
 
+# Your own topic list. The script uses these first (one per video, never twice), then falls back to
+# letting Claude choose. Add or delete lines freely. Keep each one short and specific.
+TOPIC_BANK = {
+    "mystery": [
+        "The Kryptos sculpture and its unsolved fourth passage",
+        "The Tunguska event of 1908",
+        "The Dancing Plague of 1518",
+        "The Hessdalen lights in Norway",
+        "The Nazca Lines and why they were made",
+        "The Rohonc Codex",
+        "The Beale ciphers",
+        "The Oak Island Money Pit",
+        "The Green Children of Woolpit",
+        "The Taos Hum",
+        "Cicada 3301 internet puzzles",
+        "The Kensington Runestone",
+    ],
+    "true_crime": [
+        "Louis Le Prince, who vanished from a train in 1890",
+        "The Lead Masks Case, Brazil 1966",
+        "The disappearance of Jim Thompson, the Thai silk king, 1967",
+        "The Zodiac Killer's unsolved ciphers",
+        "The disappearance of Amelia Earhart, 1937",
+        "Percy Fawcett's vanishing in the Amazon, 1925",
+        "The 1978 Lufthansa heist at JFK airport",
+        "The mystery of Mary Rogers, 1841",
+        "The disappearance of Prime Minister Harold Holt, 1967",
+        "The disappearance of Jimmy Hoffa, 1975",
+    ],
+    "history": [
+        "The Great Emu War of 1932",
+        "The Halifax Explosion of 1917",
+        "The Year Without a Summer, 1816",
+        "The Zimmermann Telegram",
+        "Juan Pujol Garcia, the double agent code-named Garbo",
+        "Wojtek, the bear who served in the Polish army",
+        "Joshua Norton, Emperor of the United States",
+        "The Carrington Event of 1859",
+        "The Christmas Truce of 1914",
+    ],
+    "sports": [
+        "Eddie the Eagle at the 1988 Winter Olympics",
+        "Derek Redmond finishing the 1992 Olympic 400 metres",
+        "Eric Liddell and the 1924 Olympics",
+        "The Jamaican bobsled team at the 1988 Olympics",
+        "Bob Beamon's 1968 long jump",
+        "The Miracle on Ice, 1980",
+        "Greece winning Euro 2004",
+        "Dick Fosbury and the Fosbury Flop",
+    ],
+    "did_you_know": [
+        "Tardigrades surviving in space",
+        "The Eiffel Tower grows taller in summer",
+        "Antarctica is the world's largest desert",
+        "Wood frogs freeze solid and thaw back to life",
+        "Methuselah, the ancient bristlecone pine",
+        "Crows recognising human faces",
+    ],
+}
+
+def next_bank_topic(niche, history):
+    used = history.get("_bank_used", [])
+    for t in TOPIC_BANK.get(niche, []):
+        if t not in used:
+            return t
+    return None
+
 SCRIPT_SYSTEM = """You write scripts for faceless vertical short videos (YouTube Shorts, TikTok, Reels).
 
 Rules:
@@ -162,10 +230,13 @@ def check_script(s):
         raise ValueError("Need at least 3 shot queries")
     return s
 
-def generate_script(niche, avoid):
+def generate_script(niche, avoid, forced=None):
     user = (f"Niche: {NICHES[niche]['label']}\nGuidance: {NICHES[niche]['guidance']}\n"
-            f"Do NOT repeat or closely resemble these earlier topics: {json.dumps(avoid[-60:])}\n"
-            f"Write one new script now.")
+            f"Do NOT repeat or closely resemble these earlier topics: {json.dumps(avoid[-60:])}\n")
+    if forced:
+        user += (f"Write about THIS specific topic: {forced}. Use only well-documented facts, and say plainly what is "
+                 f"uncertain or disputed. Set the JSON \"topic\" field to a short label for it.\n")
+    user += "Write one new script now."
     for attempt in range(3):
         extra = "\n\nReply with the JSON object only, starting with { and ending with }." if attempt else ""
         msg = claude.messages.create(model=CLAUDE_MODEL, max_tokens=2500, system=SCRIPT_SYSTEM,
@@ -248,16 +319,25 @@ def claude_review(prompt):
     text = "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
     return extract_json(text)
 
+_gemini_down = {"off": False}
+
 def proofread(script, niche):
     prompt = (PROOF_PROMPT.replace("{NICHE}", NICHES[niche]["label"])
                           .replace("{SCRIPT}", json.dumps(script, ensure_ascii=False, indent=2)))
-    for search in ([True, False] if GEMINI_USE_SEARCH else [False]):
-        try:
-            resp = gemini_call(prompt, search)
-            return extract_json(resp.text or "")
-        except Exception as e:
-            print(f"  Gemini check failed (search={search}): {str(e)[:150]}")
-    print("  Gemini unavailable, Claude will fact-check this one instead.")
+    if not _gemini_down["off"]:
+        quota_errors = 0
+        for search in ([True, False] if GEMINI_USE_SEARCH else [False]):
+            try:
+                resp = gemini_call(prompt, search)
+                return extract_json(resp.text or "")
+            except Exception as e:
+                print(f"  Gemini check failed (search={search}): {str(e)[:150]}")
+                if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+                    quota_errors += 1
+        if quota_errors >= 2 or (quota_errors == 1 and not GEMINI_USE_SEARCH):
+            _gemini_down["off"] = True
+            print("  Gemini quota is used up. Skipping Gemini for the rest of this run.")
+    print("  Claude will fact-check this one instead.")
     out = claude_review(prompt)
     out["issues"] = ["Gemini was unavailable, so only Claude checked this script. Verify every fact yourself before posting."] + list(out.get("issues", []))
     return out
@@ -590,14 +670,19 @@ def run_daily():
         done = False
         for attempt in range(1, MAX_ATTEMPTS_PER_VIDEO + 1):
             try:
+                forced = next_bank_topic(niche, history)
+                if forced:
+                    print("  chosen topic from your list:", forced)
                 with time_limit(300, "writing the script"):
-                    script = generate_script(niche, history.get(niche, []))
+                    script = generate_script(niche, history.get(niche, []), forced)
                 print("  topic:", script["topic"])
                 with time_limit(420, "fact-checking"):
                     review = proofread(script, niche)
                 verdict = review.get("verdict", "reject")
                 issues = review.get("issues", [])
                 history.setdefault(niche, []).append(script["topic"])
+                if forced:
+                    history.setdefault("_bank_used", []).append(forced)   # only counted once it was actually checked
                 if verdict == "reject":
                     print("  rejected by fact-checker:", issues)
                     continue
