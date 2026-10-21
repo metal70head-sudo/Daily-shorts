@@ -1,0 +1,38 @@
+{
+ "true_crime": [
+  "D.B. Cooper hijacking",
+  "Isabella Stewart Gardner Museum heist",
+  "Somerton Man (Tamam Shud) mystery",
+  "1987 Chicago TV signal hijacking",
+  "The Isdal Woman, Norway 1970",
+  "Flannan Isles lighthouse disappearance, 1900"
+ ],
+ "mystery": [
+  "The Wow! signal",
+  "The Mary Celeste",
+  "The Voynich manuscript",
+  "The Phaistos Disc",
+  "The lost colony of Roanoke"
+ ],
+ "history": [
+  "Stanislav Petrov false alarm 1983",
+  "Great Molasses Flood 1919",
+  "Operation Mincemeat 1943",
+  "Hiroo Onoda, the soldier who didn't stop fighting",
+  "Tsutomu Yamaguchi, survivor of both atomic bombings",
+  "The Cadaver Synod of 897"
+ ],
+ "did_you_know": [
+  "Oxford older than the Aztec Empire",
+  "Octopus hearts and blue blood",
+  "Venus rotation and year",
+  "Botanical berries",
+  "Radioactive bananas",
+  "Cleopatra and the Great Pyramid timeline"
+ ],
+ "sports": [
+  "Roger Bannister's four-minute mile",
+  "Leicester City's 5000-1 Premier League title",
+  "Abebe Bikila barefoot Olympic marathon"
+ ]
+}
