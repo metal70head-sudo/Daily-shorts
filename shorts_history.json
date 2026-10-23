@@ -5,14 +5,18 @@
   "Somerton Man (Tamam Shud) mystery",
   "1987 Chicago TV signal hijacking",
   "The Isdal Woman, Norway 1970",
-  "Flannan Isles lighthouse disappearance, 1900"
+  "Flannan Isles lighthouse disappearance, 1900",
+  "Louis Le Prince disappearance, 1890",
+  "The Lead Masks Case, Brazil 1966"
  ],
  "mystery": [
   "The Wow! signal",
   "The Mary Celeste",
   "The Voynich manuscript",
   "The Phaistos Disc",
-  "The lost colony of Roanoke"
+  "The lost colony of Roanoke",
+  "Kryptos sculpture",
+  "The Tunguska event of 1908"
  ],
  "history": [
   "Stanislav Petrov false alarm 1983",
@@ -20,7 +24,9 @@
   "Operation Mincemeat 1943",
   "Hiroo Onoda, the soldier who didn't stop fighting",
   "Tsutomu Yamaguchi, survivor of both atomic bombings",
-  "The Cadaver Synod of 897"
+  "The Cadaver Synod of 897",
+  "The Great Emu War of 1932",
+  "Halifax Explosion of 1917"
  ],
  "did_you_know": [
   "Oxford older than the Aztec Empire",
@@ -28,11 +34,27 @@
   "Venus rotation and year",
   "Botanical berries",
   "Radioactive bananas",
-  "Cleopatra and the Great Pyramid timeline"
+  "Cleopatra and the Great Pyramid timeline",
+  "Tardigrades surviving in space",
+  "Eiffel Tower thermal expansion"
  ],
  "sports": [
   "Roger Bannister's four-minute mile",
   "Leicester City's 5000-1 Premier League title",
-  "Abebe Bikila barefoot Olympic marathon"
+  "Abebe Bikila barefoot Olympic marathon",
+  "Eddie the Eagle at the 1988 Winter Olympics",
+  "Derek Redmond's 1992 Olympic 400m semifinal"
+ ],
+ "_bank_used": [
+  "Louis Le Prince, who vanished from a train in 1890",
+  "The Kryptos sculpture and its unsolved fourth passage",
+  "The Great Emu War of 1932",
+  "Tardigrades surviving in space",
+  "Eddie the Eagle at the 1988 Winter Olympics",
+  "The Tunguska event of 1908",
+  "The Lead Masks Case, Brazil 1966",
+  "The Halifax Explosion of 1917",
+  "The Eiffel Tower grows taller in summer",
+  "Derek Redmond finishing the 1992 Olympic 400 metres"
  ]
 }
