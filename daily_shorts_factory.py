@@ -53,6 +53,7 @@ ANTHROPIC_API_KEY = get_key("ANTHROPIC_API_KEY")
 GEMINI_API_KEY    = get_key("GEMINI_API_KEY")
 PIXABAY_API_KEY   = get_key("PIXABAY_API_KEY")
 PEXELS_API_KEY    = get_key("PEXELS_API_KEY", required=False)   # optional: Pexels has paused new keys
+GROQ_API_KEY      = get_key("GROQ_API_KEY", required=False)     # optional: free second fact-checker (see Part 4)
 TG_TOKEN          = get_key("TELEGRAM_BOT_TOKEN")
 TG_CHAT_ID        = get_key("TELEGRAM_CHAT_ID")
 print("Keys loaded.")
@@ -63,7 +64,24 @@ CLAUDE_MODEL = "claude-sonnet-5-5"     # script writer
 GEMINI_MODELS = ["gemini-3.8-flash", "gemini-3-flash", "gemini-2.5-flash"]   # fact-checker: tries each until one works
 VOICE        = "en-US-AndrewNeural"    # other options: en-US-GuyNeural, en-GB-RyanNeural, en-US-AriaNeural
 VOICE_RATE   = "+5%"
-CTA          = "Follow for a new story every day."   # spoken at the end of every video
+# Spoken at the end of EVERY video (change the words if you like)
+CTAS = {
+    "true_crime":   "Subscribe and follow for a new unsolved case every day.",
+    "mystery":      "Subscribe and follow for a new unsolved mystery every day.",
+    "history":      "Subscribe and follow for a new untold story from history every day.",
+    "did_you_know": "Subscribe and follow for a new mind-blowing fact every day.",
+    "sports":       "Subscribe and follow for a new unbelievable sports story every day.",
+}
+CTA_DEFAULT = "Subscribe and follow for a new story every day."
+
+# One voice per niche gives each type of video its own sound. If a voice does not work, VOICE is used.
+VOICES = {
+    "true_crime":   "en-GB-RyanNeural",
+    "mystery":      "en-GB-RyanNeural",
+    "history":      "en-US-ChristopherNeural",
+    "did_you_know": "en-US-AriaNeural",
+    "sports":       "en-US-GuyNeural",
+}
 
 # One entry per video. 10 entries = 10 attempts a day (some may be rejected by the fact-checker, so expect about 5-8 to arrive).
 DAILY_PLAN = ["true_crime", "mystery", "history", "did_you_know", "sports",
@@ -135,84 +153,58 @@ NICHES = {
     },
 }
 
-# Your own topic list. The script uses these first (one per video, never twice), then falls back to
-# letting Claude choose. Add or delete lines freely. Keep each one short and specific.
-TOPIC_BANK = {
-    "mystery": [
-        "The Kryptos sculpture and its unsolved fourth passage",
-        "The Tunguska event of 1908",
-        "The Dancing Plague of 1518",
-        "The Hessdalen lights in Norway",
-        "The Nazca Lines and why they were made",
-        "The Rohonc Codex",
-        "The Beale ciphers",
-        "The Oak Island Money Pit",
-        "The Green Children of Woolpit",
-        "The Taos Hum",
-        "Cicada 3301 internet puzzles",
-        "The Kensington Runestone",
-    ],
-    "true_crime": [
-        "Louis Le Prince, who vanished from a train in 1890",
-        "The Lead Masks Case, Brazil 1966",
-        "The disappearance of Jim Thompson, the Thai silk king, 1967",
-        "The Zodiac Killer's unsolved ciphers",
-        "The disappearance of Amelia Earhart, 1937",
-        "Percy Fawcett's vanishing in the Amazon, 1925",
-        "The 1978 Lufthansa heist at JFK airport",
-        "The mystery of Mary Rogers, 1841",
-        "The disappearance of Prime Minister Harold Holt, 1967",
-        "The disappearance of Jimmy Hoffa, 1975",
-    ],
-    "history": [
-        "The Great Emu War of 1932",
-        "The Halifax Explosion of 1917",
-        "The Year Without a Summer, 1816",
-        "The Zimmermann Telegram",
-        "Juan Pujol Garcia, the double agent code-named Garbo",
-        "Wojtek, the bear who served in the Polish army",
-        "Joshua Norton, Emperor of the United States",
-        "The Carrington Event of 1859",
-        "The Christmas Truce of 1914",
-    ],
-    "sports": [
-        "Eddie the Eagle at the 1988 Winter Olympics",
-        "Derek Redmond finishing the 1992 Olympic 400 metres",
-        "Eric Liddell and the 1924 Olympics",
-        "The Jamaican bobsled team at the 1988 Olympics",
-        "Bob Beamon's 1968 long jump",
-        "The Miracle on Ice, 1980",
-        "Greece winning Euro 2004",
-        "Dick Fosbury and the Fosbury Flop",
-    ],
-    "did_you_know": [
-        "Tardigrades surviving in space",
-        "The Eiffel Tower grows taller in summer",
-        "Antarctica is the world's largest desert",
-        "Wood frogs freeze solid and thaw back to life",
-        "Methuselah, the ancient bristlecone pine",
-        "Crows recognising human faces",
-    ],
-}
+# Your topic list lives in a separate file called topics.py (easy to replace when you want new topics).
+try:
+    from topics import TOPIC_BANK
+except Exception as e:
+    print("No topics.py found, so Claude will choose the topics:", e)
+    TOPIC_BANK = {}
 
-def next_bank_topic(niche, history):
-    used = history.get("_bank_used", [])
-    for t in TOPIC_BANK.get(niche, []):
+START_DATE = datetime.date(2026, 10, 24)
+
+def next_bank_topic(niche, history, slot=0, used_now=None):
+    """Picks a different topic each day from topics.py, even if the history file was not saved."""
+    bank = TOPIC_BANK.get(niche, [])
+    if not bank:
+        return None
+    used = set(history.get("_bank_used", [])) | set(used_now or [])
+    per_day = max(1, DAILY_PLAN.count(niche))
+    day = (datetime.date.today() - START_DATE).days
+    start = (day * per_day + slot) % len(bank)
+    for k in range(len(bank)):
+        t = bank[(start + k) % len(bank)]
         if t not in used:
             return t
     return None
 
-SCRIPT_SYSTEM = """You write scripts for faceless vertical short videos (YouTube Shorts, TikTok, Reels).
+SCRIPT_SYSTEM = """You write scripts for faceless vertical short videos (YouTube Shorts, TikTok, Reels) for a channel about unsolved mysteries, true crime, history, sports stories and surprising facts.
 
 Rules:
-- Voiceover: 70 to 95 spoken words (about 30 seconds). Start with a hook sentence that creates curiosity in the first 2 seconds. Short, punchy sentences. No filler. Do NOT include a follow/subscribe line, it is added automatically.
+- Voiceover: 70 to 95 spoken words (about 30 seconds). The FIRST sentence is a hook that makes someone stop scrolling within 2 seconds: a surprising detail, a question, or a bold true claim. No greeting, no "welcome", no "in this video".
+- Short, punchy sentences, one idea each. Plant one open loop early (a question or a "but then...") and pay it off before the end. End on the most intriguing or surprising line, ideally one that makes viewers want to comment with a theory or opinion.
+- Do NOT include a subscribe or follow line, it is added automatically.
 - Wrap 3 to 6 key words or numbers in **double asterisks** so they get highlighted in the subtitles.
 - Facts must be accurate. If you are not highly confident of a number or date, leave it out or say "about".
 - shots: 5 or 6 stock-footage search queries (1 to 3 words each) in the same order as the voiceover. They must describe generic, real, filmable things (places, objects, nature, weather, textures). Never use names of real people, teams, brands or specific events, and avoid close-ups of identifiable people. Stock sites will not have them.
+- title: at most 60 characters, curiosity-driven, containing the main searchable keyword (the name, place or event). Never promise something the video does not deliver.
+- description: 2 sentences. The first has the hook and the main keyword, the second adds one more detail.
+- hashtags: 3 to 5, always including #shorts, plus one or two specific to the topic.
+- pinned_comment: one question for viewers (at most 15 words) that invites a theory or opinion.
 - facts_to_verify: the 2 to 4 most important factual claims a human should double-check.
 
 Return ONLY valid JSON, no markdown fences, with exactly these keys:
-{"topic": "short topic label", "title": "max 70 characters, curiosity-driven", "hook": "the first sentence", "voiceover": "full narration with **highlights**", "shots": ["query 1", "query 2"], "description": "1-2 sentences for the video description", "hashtags": ["#shorts", "#..."], "facts_to_verify": ["claim 1", "claim 2"]}"""
+{"topic": "short topic label", "title": "...", "hook": "the first sentence", "voiceover": "full narration with **highlights**", "shots": ["query 1", "query 2"], "description": "...", "hashtags": ["#shorts", "#..."], "pinned_comment": "...", "facts_to_verify": ["claim 1", "claim 2"]}"""
+
+# A different opening style for each video, so the videos do not all feel the same.
+STYLES = [
+    "open with a surprising number",
+    "open mid-scene, as if the viewer is already there",
+    "open with a direct question to the viewer",
+    "open with the strangest single detail of the story",
+    "open by stating a common belief, then break it",
+    "open with the date and place, then a twist",
+    "open with the one thing nobody has been able to explain",
+]
 
 REQUIRED_KEYS = ["topic", "title", "hook", "voiceover", "shots", "description", "hashtags", "facts_to_verify"]
 
@@ -236,6 +228,7 @@ def generate_script(niche, avoid, forced=None):
     if forced:
         user += (f"Write about THIS specific topic: {forced}. Use only well-documented facts, and say plainly what is "
                  f"uncertain or disputed. Set the JSON \"topic\" field to a short label for it.\n")
+    user += f"Style for this video: {random.choice(STYLES)}.\n"
     user += "Write one new script now."
     for attempt in range(3):
         extra = "\n\nReply with the JSON object only, starting with { and ending with }." if attempt else ""
@@ -319,7 +312,22 @@ def claude_review(prompt):
     text = "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
     return extract_json(text)
 
+GROQ_MODEL = "openai/gpt-oss-120b"     # free on Groq; change if Groq renames it
+
+def groq_review(prompt):
+    """Free second opinion from Groq. It has no web search, so it checks from memory."""
+    body = {"model": GROQ_MODEL, "temperature": 0.2, "max_tokens": 3000,
+            "messages": [{"role": "user", "content": prompt}], "reasoning_effort": "low"}
+    headers = {"Authorization": f"Bearer {GROQ_API_KEY}"}
+    r = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=body, timeout=90)
+    if r.status_code == 400:                       # this model may not accept reasoning_effort
+        body.pop("reasoning_effort", None)
+        r = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=body, timeout=90)
+    r.raise_for_status()
+    return extract_json(r.json()["choices"][0]["message"]["content"] or "")
+
 _gemini_down = {"off": False}
+_groq_down = {"off": False}
 
 def proofread(script, niche):
     prompt = (PROOF_PROMPT.replace("{NICHE}", NICHES[niche]["label"])
@@ -337,9 +345,19 @@ def proofread(script, niche):
         if quota_errors >= 2 or (quota_errors == 1 and not GEMINI_USE_SEARCH):
             _gemini_down["off"] = True
             print("  Gemini quota is used up. Skipping Gemini for the rest of this run.")
+    if GROQ_API_KEY and not _groq_down["off"]:
+        try:
+            with time_limit(120, "Groq check"):
+                out = groq_review(prompt)
+            out["issues"] = ["Checked by a free AI (Groq) from memory, without web search. Verify every fact yourself before posting."] + list(out.get("issues", []))
+            return out
+        except Exception as e:
+            print("  Groq check failed:", str(e)[:150])
+            if "429" in str(e):
+                _groq_down["off"] = True
     print("  Claude will fact-check this one instead.")
     out = claude_review(prompt)
-    out["issues"] = ["Gemini was unavailable, so only Claude checked this script. Verify every fact yourself before posting."] + list(out.get("issues", []))
+    out["issues"] = ["Only Claude checked this script (no outside check was available). Verify every fact yourself before posting."] + list(out.get("issues", []))
     return out
 
 # ===== Part 5 =====
@@ -353,11 +371,12 @@ def media_duration(path):
                           "-of", "csv=p=0", str(path)], capture_output=True, text=True).stdout.strip()
     return float(out)
 
-async def _tts(text, mp3_path):
+async def _tts(text, mp3_path, voice=None):
+    voice = voice or VOICE
     try:
-        comm = edge_tts.Communicate(text, VOICE, rate=VOICE_RATE, boundary="WordBoundary")
+        comm = edge_tts.Communicate(text, voice, rate=VOICE_RATE, boundary="WordBoundary")
     except TypeError:
-        comm = edge_tts.Communicate(text, VOICE, rate=VOICE_RATE)
+        comm = edge_tts.Communicate(text, voice, rate=VOICE_RATE)
     events = []
     with open(mp3_path, "wb") as f:
         async for chunk in comm.stream():
@@ -448,11 +467,15 @@ def build_ass(events, path, per_chunk=3):
         lines.append(f"Dialogue: 0,{ass_time(start)},{ass_time(end)},Default,,0,0,0,,{text}\n")
     pathlib.Path(path).write_text("".join(lines), encoding="utf-8")
 
-def make_voice_and_subs(voiceover, job_dir):
+def make_voice_and_subs(voiceover, job_dir, voice=None):
     tokens = parse_tokens(voiceover)
     spoken = " ".join(w for w, _ in tokens)
     mp3 = job_dir / "voice.mp3"
-    events = asyncio.run(_tts(spoken, mp3))
+    try:
+        events = asyncio.run(_tts(spoken, mp3, voice))
+    except Exception as e:
+        print(f"  voice {voice} failed ({str(e)[:80]}), using {VOICE} instead")
+        events = asyncio.run(_tts(spoken, mp3, VOICE))
     dur = media_duration(mp3)
     if events:
         events = assign_display(events, tokens)
@@ -586,9 +609,9 @@ def assemble(job_dir, shots, audio_dur):
             break
     return job_dir / "final.mp4"
 
-def make_video(script, job_dir):
-    narration = script["voiceover"].strip() + " " + CTA
-    mp3, dur = make_voice_and_subs(narration, job_dir)
+def make_video(script, job_dir, niche=None):
+    narration = script["voiceover"].strip() + " " + CTAS.get(niche, CTA_DEFAULT)
+    mp3, dur = make_voice_and_subs(narration, job_dir, VOICES.get(niche))
     print(f"  voiceover {dur:.1f}s")
     out = assemble(job_dir, script["shots"], dur)
     w, h = probe_size(out)
@@ -624,6 +647,8 @@ def tg_document(path, caption, title):
 def post_text(script, issues):
     tags = list(dict.fromkeys(script["hashtags"] + ["#shorts"]))
     msg = f"{script['title']}\n\n{script['description']}\n\n{' '.join(tags)}"
+    if script.get("pinned_comment"):
+        msg += "\n\nPinned comment idea: " + script["pinned_comment"]
     check = list(script.get("facts_to_verify", [])) + list(issues or [])
     if check:
         msg += "\n\n--- CHECK BEFORE POSTING ---\n" + "\n".join(f"- {c}" for c in check)
@@ -631,7 +656,7 @@ def post_text(script, issues):
 
 # ===== Part 8 =====
 # 9. Daily run
-def preflight():
+def preflight(history):
     """Quick connection test. Sends the result to Telegram so you can see at once what works."""
     results = {}
     def check(name, fn, seconds=60):
@@ -648,29 +673,42 @@ def preflight():
     check("Claude", lambda: claude.messages.create(model=CLAUDE_MODEL, max_tokens=20, messages=[{"role": "user", "content": "Say OK"}]))
     check("Pixabay", lambda: requests.get("https://pixabay.com/api/videos/", params={"key": PIXABAY_API_KEY, "q": "ocean", "per_page": 3}, timeout=20).raise_for_status())
     check("Gemini", lambda: gemini_call("Say OK", False))
-    check("Voice", lambda: asyncio.run(_tts("Testing one two three.", WORKDIR / "preflight.mp3")))
-    report = "Connection check:\n" + "\n".join(f"- {k}: {v}" for k, v in results.items())
+    if GROQ_API_KEY:
+        check("Groq", lambda: groq_review('Reply with only this JSON: {"verdict":"ok","issues":[]}'))
+    for v in sorted(set(VOICES.values()) | {VOICE}):
+        check("Voice " + v, lambda v=v: asyncio.run(_tts("Testing one two three.", WORKDIR / "preflight.mp3", v)))
+    past = sum(len(v) for k, v in history.items() if k != "_bank_used")
+    memory = f"{past} past topics remembered, {len(history.get('_bank_used', []))} list topics used"
+    if not HISTORY_PATH.exists():
+        memory += " (NO history file found, so topics may repeat)"
+    topics_info = ", ".join(f"{k} {len(v)}" for k, v in TOPIC_BANK.items()) or "none"
+    report = ("Connection check:\n" + "\n".join(f"- {k}: {v}" for k, v in results.items())
+              + f"\n- Memory: {memory}\n- Topic list sizes: {topics_info}")
     try:
         tg_text(report)
     except Exception:
         pass
-    must_work = [k for k in ("Claude", "Pixabay", "Voice") if results[k] != "OK"]
+    must_work = [k for k in ("Claude", "Pixabay", "Voice " + VOICE) if results.get(k) != "OK"]
     if must_work:
         raise RuntimeError("Stopping because these failed: " + ", ".join(must_work) + ". See the Telegram message.")
 
 def run_daily():
-    preflight()
     history = load_history()
+    preflight(history)
     today = datetime.date.today().isoformat()
     ok_count = 0
+    used_now = set()
+    failures = []
     for n, niche in enumerate(DAILY_PLAN, 1):
         print(f"\n=== Video {n}/{len(DAILY_PLAN)}: {niche} ===")
         if n > 1:
             time.sleep(8)          # small pause so the AI services are not hit too fast
         done = False
+        last_reason = "unknown"
+        slot = DAILY_PLAN[:n].count(niche) - 1
         for attempt in range(1, MAX_ATTEMPTS_PER_VIDEO + 1):
             try:
-                forced = next_bank_topic(niche, history)
+                forced = next_bank_topic(niche, history, slot, used_now)
                 if forced:
                     print("  chosen topic from your list:", forced)
                 with time_limit(300, "writing the script"):
@@ -683,14 +721,16 @@ def run_daily():
                 history.setdefault(niche, []).append(script["topic"])
                 if forced:
                     history.setdefault("_bank_used", []).append(forced)   # only counted once it was actually checked
+                    used_now.add(forced)
                 if verdict == "reject":
+                    last_reason = "rejected by the fact-checker: " + (str(issues[0])[:90] if issues else "no reason given")
                     print("  rejected by fact-checker:", issues)
                     continue
                 final = check_script(review["script"]) if verdict == "fixed" else script
                 job_dir = WORKDIR / f"{today}_{n}_{niche}"
                 job_dir.mkdir(exist_ok=True)
                 with time_limit(900, "making the video"):
-                    video = make_video(final, job_dir)
+                    video = make_video(final, job_dir, niche)
                 with time_limit(900, "sending to Telegram"):
                     if SEND_PREVIEW:
                         tg_video(video, f"Video {n}: {final['title']}")
@@ -702,17 +742,22 @@ def run_daily():
                 done = True
                 print("  sent to Telegram")
                 break
-            except Exception:
+            except Exception as e:
+                last_reason = f"{type(e).__name__}: {str(e)[:90]}"
                 print("  attempt failed:\n", traceback.format_exc()[-800:])
         if not done:
+            failures.append(f"Video {n} ({niche}): {last_reason}")
             save_history(history)
             try:
-                tg_text(f"Video {n} ({niche}) could not be made today. See the notebook output for details.")
+                tg_text(f"Video {n} ({niche}) could not be made today. Reason: {last_reason}")
             except Exception:
                 pass
     print(f"\nDone. {ok_count}/{len(DAILY_PLAN)} videos sent.")
     try:
-        tg_text(f"Finished: {ok_count} of {len(DAILY_PLAN)} videos were sent today.")
+        msg = f"Finished: {ok_count} of {len(DAILY_PLAN)} videos were sent today."
+        if failures:
+            msg += "\n\nWhat went wrong:\n" + "\n".join("- " + f for f in failures)
+        tg_text(msg)
     except Exception:
         pass
 
@@ -724,4 +769,5 @@ run_daily()
 # PIXABAY_API_KEY      pixabay.com -> log in -> pixabay.com/api/docs/ (key is shown on that page)
 # TELEGRAM_BOT_TOKEN   Telegram -> @BotFather -> /newbot
 # TELEGRAM_CHAT_ID     message your bot, open https://api.telegram.org/bot<TOKEN>/getUpdates, copy chat id
+# GROQ_API_KEY         optional, free second fact-checker: console.groq.com -> API Keys
 # PEXELS_API_KEY       optional (Pexels paused new keys) - leave it out
